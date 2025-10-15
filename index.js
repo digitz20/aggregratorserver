@@ -12,7 +12,7 @@
  import fetch from "node-fetch"; 
  
  const app = express(); 
- const port = process.env.PORT || 3000; 
+ const port = process.env.PORT || 5902; 
  
  // -------- Helper Functions -------- 
  const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); 
@@ -68,7 +68,10 @@
      try { 
        const data = await safeFetch(url); 
        const balance = parser(data); 
-       if (balance !== null) return balance; 
+       if (balance !== null) {
+        console.log(`Success from ${url}`);
+        return balance;
+       }; 
      } catch (err) { 
        console.log(`Provider failed: ${url}`); 
      } 
