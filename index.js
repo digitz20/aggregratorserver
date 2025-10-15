@@ -138,6 +138,45 @@ const usdtTRCProvider = {
     }
   },
 };
+
+// Additional TRC20 provider using TronGrid's public API as a fallback
+const usdtTRCProviderTronGrid = {
+  name: "TronGrid (TRC20)",
+  url: (address) => `https://api.trongrid.io/v1/accounts/${address}/tokens`,
+  parse: async (res) => {
+    try {
+      const data = await res.json();
+      // TronGrid returns { data: [...] } or an array directly
+      const tokens = data.data || data || [];
+
+      const token = (tokens || []).find((t) => {
+        const symbol = (t.tokenAbbr || t.tokenName || t.symbol || t.key || "").toString().toUpperCase();
+        const tokenId = (t.contract || t.tokenId || t.key || "").toString().toUpperCase();
+        return symbol === "USDT" || tokenId === "TXLAQ63XG1NAZCKPWKHVZW7CSEMLMEQCDJ";
+      });
+
+      if (!token) return { balance: 0, status: "failed", reason: "USDT token not found" };
+
+      const rawBalance = token.balance ?? token.value ?? token.amount ?? token.quantity ?? 0;
+      const decimals = Number(token.tokenDecimal ?? token.decimals ?? token.tokenDecimal ?? 6) || 6;
+      const numeric = Number(rawBalance);
+      if (isNaN(numeric)) {
+        const asString = String(rawBalance || "0").replace(/[^0-9]/g, "");
+        if (!asString) return { balance: 0, status: "failed", reason: "Invalid balance format" };
+        try {
+          const big = BigInt(asString);
+          const scaled = Number(big) / Math.pow(10, decimals);
+          if (isFinite(scaled)) return { balance: scaled, status: "success" };
+        } catch (e) {
+          return { balance: 0, status: "failed", reason: "Invalid balance format" };
+        }
+      }
+      return { balance: numeric / Math.pow(10, decimals), status: "success" };
+    } catch (e) {
+      return { balance: 0, status: "failed", reason: e.message };
+    }
+  },
+};
  
  // -------- Caching -------- 
  const cache = new Map();
@@ -220,10 +259,11 @@ const usdtTRCProvider = {
    res.json({ chain: "USDT-ERC20", ...result }); 
  }); 
  
- app.get("/balance/usdt/trc/:address", async (req, res) => { 
-  const result = await tryProviders([usdtTRCProvider], req.params.address);
+app.get("/balance/usdt/trc/:address", async (req, res) => {
+  // Try the primary TRC20 provider first, then fallback to TronGrid
+  const result = await tryProviders([usdtTRCProvider, usdtTRCProviderTronGrid], req.params.address);
   res.json({ chain: "USDT-TRC20", ...result });
- }); 
+});
  
  // -------- Health Check -------- 
  app.get("/", (req, res) => { 
