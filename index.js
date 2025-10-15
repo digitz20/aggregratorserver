@@ -40,43 +40,6 @@
 
  ]; 
  
-const usdtERCProvider = {
-  name: "Ethplorer (ERC20)",
-  url: (address) =>
-    `https://api.ethplorer.io/getAddressInfo/${address}?apiKey=freekey`,
-  parse: async (res) => {
-    // Ethplorer returns slightly different shapes depending on account activity.
-    // Be defensive: check top-level tokens array, then tokenInfo fields.
-    try {
-      const data = await res.json();
-      const tokens = data.tokens || data.token || [];
-
-      // Normalize token entries and try to find USDT by symbol or known contract
-      const token = (tokens || []).find((t) => {
-        const ti = t.tokenInfo || t;
-        const symbol = (ti.symbol || t.symbol || "").toString().toUpperCase();
-        const addr = (ti.address || ti.contract || "").toString().toLowerCase();
-        return (
-          symbol === "USDT" ||
-          addr === "0xdac17f958d2ee523a2206206994597c13d831ec7"
-        );
-      });
-
-      if (!token) return { balance: 0, status: "failed", reason: "USDT token not found" };
-
-      // Balance can appear on the token object or inside token.tokenInfo
-      const rawBalance = token.balance ?? token.tokenInfo?.balance ?? token.tokenInfo?.rawBalance ?? 0;
-      const decimals = Number(token.tokenInfo?.decimals ?? token.decimals ?? 6) || 6;
-      const numeric = Number(rawBalance);
-      if (isNaN(numeric)) {
-        return { balance: 0, status: "failed", reason: "Invalid balance format" };
-      }
-      return { balance: numeric / Math.pow(10, decimals), status: "success" };
-    } catch (e) {
-      return { balance: 0, status: "failed", reason: e.message };
-    }
-  },
-};
  
 const usdtTRCProvider = {
   name: "Tron (TronScan/TronGrid)",
