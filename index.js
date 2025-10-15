@@ -40,59 +40,34 @@
 
  ]; 
  
- const usdtERCProvider = { 
-   name: "Ethplorer (ERC20)", 
-   url: (address) => 
-     `https://api.ethplorer.io/getAddressInfo/${address}?apiKey=freekey`, 
-  parse: async (res) => { 
-    // Defensive parsing - Ethplorer responses can vary and tokenInfo may be missing
-    const data = await res.json(); 
-    const tokens = data.tokens || [];
-    const token = tokens.find((t) => {
-      const ti = t.tokenInfo || {};
-      const symbol = (ti.symbol || t.symbol || "").toString().toUpperCase();
-      const addr = (ti.address || "").toString().toLowerCase();
-      return (
-        symbol === "USDT" ||
-        addr === "0xdac17f958d2ee523a2206206994597c13d831ec7"
-      );
-    });
-
-    if (!token) return 0;
-
-    // Prefer token.balance if present; fall back to token.tokenInfo.balance
-    const rawBalance = token.balance ?? token.tokenInfo?.balance ?? 0;
-    const decimals = Number(token.tokenInfo?.decimals ?? token.decimals ?? 6) || 6;
-    const numeric = parseFloat(rawBalance);
-    if (isNaN(numeric)) return 0;
-    return numeric / Math.pow(10, decimals);
-  }, 
- }; 
- 
- const usdtTRCProvider = { 
-   name: "TronScan (TRC20)", 
-   url: (address) => 
-     `https://apilist.tronscan.org/api/account?address=${address}`, 
+const usdtERCProvider = {
+  name: "Ethplorer (ERC20)",
+  url: (address) =>
+    `https://api.ethplorer.io/getAddressInfo/${address}?apiKey=freekey`,
   parse: async (res) => {
+    // Ethplorer returns slightly different shapes depending on account activity.
+    // Be defensive: check top-level tokens array, then tokenInfo fields.
     try {
       const data = await res.json();
-      const tokens = data.trc20 || [];
-      const token = tokens.find((t) => {
-        const symbol = (t.symbol || "").toString().toUpperCase();
-        const tokenId = (t.tokenId || "").toString();
+      const tokens = data.tokens || data.token || [];
+
+      // Normalize token entries and try to find USDT by symbol or known contract
+      const token = (tokens || []).find((t) => {
+        const ti = t.tokenInfo || t;
+        const symbol = (ti.symbol || t.symbol || "").toString().toUpperCase();
+        const addr = (ti.address || ti.contract || "").toString().toLowerCase();
         return (
           symbol === "USDT" ||
-          tokenId === "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj"
+          addr === "0xdac17f958d2ee523a2206206994597c13d831ec7"
         );
       });
 
-      if (!token) {
-        return { balance: 0, status: "failed", reason: "USDT token not found" };
-      }
+      if (!token) return { balance: 0, status: "failed", reason: "USDT token not found" };
 
-      const rawBalance = token.balance ?? 0;
-      const decimals = Number(token.decimals ?? 6) || 6;
-      const numeric = parseFloat(rawBalance);
+      // Balance can appear on the token object or inside token.tokenInfo
+      const rawBalance = token.balance ?? token.tokenInfo?.balance ?? token.tokenInfo?.rawBalance ?? 0;
+      const decimals = Number(token.tokenInfo?.decimals ?? token.decimals ?? 6) || 6;
+      const numeric = Number(rawBalance);
       if (isNaN(numeric)) {
         return { balance: 0, status: "failed", reason: "Invalid balance format" };
       }
@@ -101,7 +76,68 @@
       return { balance: 0, status: "failed", reason: e.message };
     }
   },
- }; 
+};
+ 
+const usdtTRCProvider = {
+  name: "Tron (TronScan/TronGrid)",
+  url: (address) => `https://apilist.tronscan.org/api/account?address=${address}`,
+  parse: async (res) => {
+    // Tronscan / TronGrid responses vary. Try to support multiple shapes so USDT is found.
+    const knownTokenIds = new Set([
+      "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj", // TRON USDT main id
+      "1002000", // some APIs return numeric ids or keys
+    ]);
+    try {
+      const data = await res.json();
+
+      // payload may be wrapped in data.data or be top-level
+      const payload = data.data || data || {};
+
+      // Many possible fields: trc20, tokens, tokenBalances, assetV2
+      const candidates =
+        payload.trc20 || payload.tokens || payload.tokenBalances || payload.trc20Tokens || payload.assetV2 || [];
+
+      // Normalize assetV2 entries (TronGrid style) into objects with key/value
+      const tokens = (candidates || []).map((t) => {
+        // assetV2 entries sometimes look like {key: 'USDT', value: '1230000'}
+        if (t && typeof t === "object") return t;
+        return null;
+      }).filter(Boolean);
+
+      const token = tokens.find((t) => {
+        const symbol = (t.symbol || t.tokenName || t.key || t.name || "").toString().toUpperCase();
+        const tokenId = (t.tokenId || t.contract || t.key || t.token_id || "").toString();
+        // match by symbol or by known token id
+        return symbol === "USDT" || knownTokenIds.has(tokenId) || tokenId === "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj";
+      });
+
+      if (!token) {
+        return { balance: 0, status: "failed", reason: "USDT token not found" };
+      }
+
+      // Balance field variations: balance, value, amount, balanceStr, value_str
+      const rawBalance = token.balance ?? token.value ?? token.amount ?? token.balanceStr ?? token.value_str ?? token.valueString ?? 0;
+      const decimals = Number(token.decimals ?? token.tokenDecimal ?? token.decimals_str ?? 6) || 6;
+      const numeric = Number(rawBalance);
+      if (isNaN(numeric)) {
+        // Some Tron APIs return integer strings that need to be parsed as BigInt; attempt fallback
+        const asString = String(rawBalance || "0").replace(/[^0-9]/g, "");
+        if (!asString) return { balance: 0, status: "failed", reason: "Invalid balance format" };
+        try {
+          // parse possibly very large integer
+          const big = BigInt(asString);
+          const scaled = Number(big) / Math.pow(10, decimals);
+          if (isFinite(scaled)) return { balance: scaled, status: "success" };
+        } catch (e) {
+          return { balance: 0, status: "failed", reason: "Invalid balance format" };
+        }
+      }
+      return { balance: numeric / Math.pow(10, decimals), status: "success" };
+    } catch (e) {
+      return { balance: 0, status: "failed", reason: e.message };
+    }
+  },
+};
  
  // -------- Caching -------- 
  const cache = new Map();
