@@ -37,14 +37,7 @@
      url: `https://blockchain.info/balance?active=${addr}`, 
      parser: (data) => (data[addr] ? data[addr].final_balance / 1e8 : null), 
    }), 
-   (addr) => ({ 
-     url: `https://blockstream.info/api/address/${addr}`, 
-     parser: (data) => 
-       data.chain_stats 
-         ? (data.chain_stats.funded_txo_sum - data.chain_stats.spent_txo_sum) / 
-           1e8 
-         : null, 
-   }), 
+
  ]; 
  
  const usdtERCProvider = { 
