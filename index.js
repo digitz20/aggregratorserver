@@ -44,32 +44,56 @@
    name: "Ethplorer (ERC20)", 
    url: (address) => 
      `https://api.ethplorer.io/getAddressInfo/${address}?apiKey=freekey`, 
-   parse: async (res) => { 
-     const data = await res.json(); 
-     const token = data.tokens?.find( 
-       (t) => 
-         t.tokenInfo.symbol === "USDT" || 
-         t.tokenInfo.address.toLowerCase() === 
-           "0xdac17f958d2ee523a2206206994597c13d831ec7" // USDT contract 
-     ); 
-     return token ? parseFloat(token.balance) / 1e6 : 0; 
-   }, 
+  parse: async (res) => { 
+    // Defensive parsing - Ethplorer responses can vary and tokenInfo may be missing
+    const data = await res.json(); 
+    const tokens = data.tokens || [];
+    const token = tokens.find((t) => {
+      const ti = t.tokenInfo || {};
+      const symbol = (ti.symbol || t.symbol || "").toString().toUpperCase();
+      const addr = (ti.address || "").toString().toLowerCase();
+      return (
+        symbol === "USDT" ||
+        addr === "0xdac17f958d2ee523a2206206994597c13d831ec7"
+      );
+    });
+
+    if (!token) return 0;
+
+    // Prefer token.balance if present; fall back to token.tokenInfo.balance
+    const rawBalance = token.balance ?? token.tokenInfo?.balance ?? 0;
+    const decimals = Number(token.tokenInfo?.decimals ?? token.decimals ?? 6) || 6;
+    const numeric = parseFloat(rawBalance);
+    if (isNaN(numeric)) return 0;
+    return numeric / Math.pow(10, decimals);
+  }, 
  }; 
  
  const usdtTRCProvider = { 
    name: "TronScan (TRC20)", 
    url: (address) => 
      `https://apilist.tronscan.org/api/account?address=${address}`, 
-   parse: async (res) => { 
-     const data = await res.json(); 
-     const token = data.trc20?.find( 
-       (t) => 
-         t.symbol === "USDT" || 
-         t.tokenId === 
-           "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj" // USDT-TRC20 contract 
-     ); 
-     return token ? parseFloat(token.balance) / 1e6 : 0; 
-   }, 
+  parse: async (res) => { 
+    const data = await res.json(); 
+    const tokens = data.trc20 || [];
+    const token = tokens.find((t) => {
+      const symbol = (t.symbol || "").toString().toUpperCase();
+      const tokenId = (t.tokenId || "").toString();
+      return (
+        symbol === "USDT" ||
+        tokenId === "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj"
+      );
+    });
+
+    if (!token) return 0;
+
+    const rawBalance = token.balance ?? 0;
+    // Tron TRC20 balances are often in smallest unit; default to 6 decimals for USDT
+    const decimals = Number(token.decimals ?? 6) || 6;
+    const numeric = parseFloat(rawBalance);
+    if (isNaN(numeric)) return 0;
+    return numeric / Math.pow(10, decimals);
+  }, 
  }; 
  
  // -------- Caching -------- 
