@@ -45,13 +45,6 @@
            1e8 
          : null, 
    }), 
-   (addr) => ({ 
-     url: `https://sochain.com/api/v2/get_address_balance/BTC/${addr}`, 
-     parser: (data) => 
-       data.data && data.data.confirmed_balance 
-         ? parseFloat(data.data.confirmed_balance) 
-         : null, 
-   }), 
  ]; 
  
  // -------- Caching -------- 
