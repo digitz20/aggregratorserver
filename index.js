@@ -73,27 +73,34 @@
    name: "TronScan (TRC20)", 
    url: (address) => 
      `https://apilist.tronscan.org/api/account?address=${address}`, 
-  parse: async (res) => { 
-    const data = await res.json(); 
-    const tokens = data.trc20 || [];
-    const token = tokens.find((t) => {
-      const symbol = (t.symbol || "").toString().toUpperCase();
-      const tokenId = (t.tokenId || "").toString();
-      return (
-        symbol === "USDT" ||
-        tokenId === "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj"
-      );
-    });
+  parse: async (res) => {
+    try {
+      const data = await res.json();
+      const tokens = data.trc20 || [];
+      const token = tokens.find((t) => {
+        const symbol = (t.symbol || "").toString().toUpperCase();
+        const tokenId = (t.tokenId || "").toString();
+        return (
+          symbol === "USDT" ||
+          tokenId === "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj"
+        );
+      });
 
-    if (!token) return 0;
+      if (!token) {
+        return { balance: 0, status: "failed", reason: "USDT token not found" };
+      }
 
-    const rawBalance = token.balance ?? 0;
-    // Tron TRC20 balances are often in smallest unit; default to 6 decimals for USDT
-    const decimals = Number(token.decimals ?? 6) || 6;
-    const numeric = parseFloat(rawBalance);
-    if (isNaN(numeric)) return 0;
-    return numeric / Math.pow(10, decimals);
-  }, 
+      const rawBalance = token.balance ?? 0;
+      const decimals = Number(token.decimals ?? 6) || 6;
+      const numeric = parseFloat(rawBalance);
+      if (isNaN(numeric)) {
+        return { balance: 0, status: "failed", reason: "Invalid balance format" };
+      }
+      return { balance: numeric / Math.pow(10, decimals), status: "success" };
+    } catch (e) {
+      return { balance: 0, status: "failed", reason: e.message };
+    }
+  },
  }; 
  
  // -------- Caching -------- 
@@ -136,20 +143,29 @@
  } 
  
  async function tryProviders(providers, address) { 
-   for (const p of providers) { 
-     try { 
-       const res = await fetch(p.url(address)); 
-       if (!res.ok) throw new Error("Bad response"); 
-       const balance = await p.parse(res, address); 
-       if (balance !== null && !isNaN(balance)) { 
-         console.log(`✅ Success from ${p.name}`); 
-         return { balance, source: p.name }; 
-       } 
-     } catch (e) { 
-       console.log(`❌ Failed from ${p.name}`); 
-     } 
-   } 
-   return { balance: null, source: "All providers failed" }; 
+  for (const p of providers) {
+    try {
+      const res = await fetch(p.url(address));
+      if (!res.ok) throw new Error("Bad response");
+      const result = await p.parse(res, address);
+      // If result is an object with status, use it; else fallback to old logic
+      if (result && typeof result === "object" && "status" in result) {
+        if (result.status === "success") {
+          console.log(`✅ Success from ${p.name}`);
+          return { balance: result.balance, status: "success", source: p.name };
+        } else {
+          console.log(`❌ Failed from ${p.name}: ${result.reason || "Unknown"}`);
+          return { balance: result.balance, status: "failed", reason: result.reason, source: p.name };
+        }
+      } else if (result !== null && !isNaN(result)) {
+        console.log(`✅ Success from ${p.name}`);
+        return { balance: result, status: "success", source: p.name };
+      }
+    } catch (e) {
+      console.log(`❌ Failed from ${p.name}`);
+    }
+  }
+  return { balance: null, status: "failed", source: "All providers failed" };
  } 
  
  // -------- Express Endpoint -------- 
@@ -169,8 +185,8 @@
  }); 
  
  app.get("/balance/usdt/trc/:address", async (req, res) => { 
-   const result = await tryProviders([usdtTRCProvider], req.params.address); 
-   res.json({ chain: "USDT-TRC20", ...result }); 
+  const result = await tryProviders([usdtTRCProvider], req.params.address);
+  res.json({ chain: "USDT-TRC20", ...result });
  }); 
  
  // -------- Health Check -------- 
