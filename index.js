@@ -217,10 +217,6 @@ const usdtTRCProviderTronGrid = {
    } 
  }); 
  
- app.get("/balance/usdt/erc/:address", async (req, res) => { 
-   const result = await tryProviders([usdtERCProvider], req.params.address); 
-   res.json({ chain: "USDT-ERC20", ...result }); 
- }); 
  
 app.get("/balance/usdt/trc/:address", async (req, res) => {
   // Try the primary TRC20 provider first, then fallback to TronGrid
