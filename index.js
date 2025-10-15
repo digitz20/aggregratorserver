@@ -12,7 +12,7 @@
  import fetch from "node-fetch"; 
  
  const app = express(); 
- const port = process.env.PORT || 5902; 
+ const port = process.env.PORT || 4844; 
  
  // -------- Helper Functions -------- 
  const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); 
@@ -46,6 +46,38 @@
          : null, 
    }), 
  ]; 
+ 
+ const usdtERCProvider = { 
+   name: "Ethplorer (ERC20)", 
+   url: (address) => 
+     `https://api.ethplorer.io/getAddressInfo/${address}?apiKey=freekey`, 
+   parse: async (res) => { 
+     const data = await res.json(); 
+     const token = data.tokens?.find( 
+       (t) => 
+         t.tokenInfo.symbol === "USDT" || 
+         t.tokenInfo.address.toLowerCase() === 
+           "0xdac17f958d2ee523a2206206994597c13d831ec7" // USDT contract 
+     ); 
+     return token ? parseFloat(token.balance) / 1e6 : 0; 
+   }, 
+ }; 
+ 
+ const usdtTRCProvider = { 
+   name: "TronScan (TRC20)", 
+   url: (address) => 
+     `https://apilist.tronscan.org/api/account?address=${address}`, 
+   parse: async (res) => { 
+     const data = await res.json(); 
+     const token = data.trc20?.find( 
+       (t) => 
+         t.symbol === "USDT" || 
+         t.tokenId === 
+           "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj" // USDT-TRC20 contract 
+     ); 
+     return token ? parseFloat(token.balance) / 1e6 : 0; 
+   }, 
+ }; 
  
  // -------- Caching -------- 
  const cache = new Map();
@@ -86,6 +118,23 @@
    return balance; 
  } 
  
+ async function tryProviders(providers, address) { 
+   for (const p of providers) { 
+     try { 
+       const res = await fetch(p.url(address)); 
+       if (!res.ok) throw new Error("Bad response"); 
+       const balance = await p.parse(res, address); 
+       if (balance !== null && !isNaN(balance)) { 
+         console.log(`✅ Success from ${p.name}`); 
+         return { balance, source: p.name }; 
+       } 
+     } catch (e) { 
+       console.log(`❌ Failed from ${p.name}`); 
+     } 
+   } 
+   return { balance: null, source: "All providers failed" }; 
+ } 
+ 
  // -------- Express Endpoint -------- 
  app.get("/balance/:address", async (req, res) => { 
    const { address } = req.params; 
@@ -95,6 +144,16 @@
    } catch (err) { 
      res.status(500).json({ error: err.message }); 
    } 
+ }); 
+ 
+ app.get("/balance/usdt/erc/:address", async (req, res) => { 
+   const result = await tryProviders([usdtERCProvider], req.params.address); 
+   res.json({ chain: "USDT-ERC20", ...result }); 
+ }); 
+ 
+ app.get("/balance/usdt/trc/:address", async (req, res) => { 
+   const result = await tryProviders([usdtTRCProvider], req.params.address); 
+   res.json({ chain: "USDT-TRC20", ...result }); 
  }); 
  
  // -------- Health Check -------- 
